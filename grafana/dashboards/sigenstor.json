@@ -4,7 +4,7 @@
   "timezone": "browser",
   "editable": true,
   "refresh": "10s",
-  "time": { "from": "now-6h", "to": "now" },
+  "time": { "from": "now-6h", "to": "now+2d" },
   "panels": [
     {
       "id": 1,
@@ -370,6 +370,91 @@
         {
           "refId": "C",
           "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"sigenstor\") |> filter(fn: (r) => r._field == \"total_exported_energy_kwh\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"total_exported_energy_kwh\")"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Solar radiation (Open-Meteo forecast)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 50 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "W/m²",
+          "custom": { "lineWidth": 2, "fillOpacity": 8, "spanNulls": true }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "shortwave_radiation_wm2" }, "properties": [
+            { "id": "displayName", "value": "Global (shortwave)" },
+            { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } }
+          ] },
+          { "matcher": { "id": "byName", "options": "direct_radiation_wm2" }, "properties": [
+            { "id": "displayName", "value": "Direct" },
+            { "id": "color", "value": { "mode": "fixed", "fixedColor": "#d95926" } }
+          ] },
+          { "matcher": { "id": "byName", "options": "diffuse_radiation_wm2" }, "properties": [
+            { "id": "displayName", "value": "Diffuse" },
+            { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } }
+          ] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather\") |> filter(fn: (r) => r._field == \"shortwave_radiation_wm2\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"shortwave_radiation_wm2\")"
+        },
+        {
+          "refId": "B",
+          "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather\") |> filter(fn: (r) => r._field == \"direct_radiation_wm2\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"direct_radiation_wm2\")"
+        },
+        {
+          "refId": "C",
+          "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather\") |> filter(fn: (r) => r._field == \"diffuse_radiation_wm2\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"diffuse_radiation_wm2\")"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Cloud cover (Open-Meteo forecast)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 58 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "spanNulls": true },
+          "color": { "mode": "fixed", "fixedColor": "#9085e9" }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather\") |> filter(fn: (r) => r._field == \"cloud_cover_pct\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Air temperature (Open-Meteo forecast)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 58 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": { "lineWidth": 2, "fillOpacity": 8, "spanNulls": true },
+          "color": { "mode": "fixed", "fixedColor": "#e66767" }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather\") |> filter(fn: (r) => r._field == \"temperature_c\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)"
         }
       ]
     }
