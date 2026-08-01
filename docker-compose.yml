@@ -32,6 +32,22 @@ services:
       INFLUXDB_ORG: ${INFLUXDB_ORG}
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
 
+  weather-collector:
+    build: ./weather-collector
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    environment:
+      WEATHER_LATITUDE: ${WEATHER_LATITUDE}
+      WEATHER_LONGITUDE: ${WEATHER_LONGITUDE}
+      WEATHER_PAST_DAYS: ${WEATHER_PAST_DAYS}
+      WEATHER_FORECAST_DAYS: ${WEATHER_FORECAST_DAYS}
+      WEATHER_POLL_SECONDS: ${WEATHER_POLL_SECONDS}
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
+
   grafana:
     image: grafana/grafana:11.4.0
     restart: unless-stopped

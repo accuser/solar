@@ -6,11 +6,13 @@ them to InfluxDB; Grafana visualizes them. Everything runs in Docker on your
 own network - nothing leaves the house.
 
 ```
-SigenStor (192.168.68.56:502, Modbus TCP)
-        |
-   collector (Python / pymodbus)
-        |
-    InfluxDB  --->  Grafana (http://localhost:3000)
+SigenStor (192.168.68.56:502, Modbus TCP)          Open-Meteo (forecast API)
+        |                                                    |
+   collector (Python / pymodbus)          weather-collector (Python / requests)
+        |                                                    |
+        +---------------------> InfluxDB <-------------------+
+                                    |
+                                 Grafana (http://localhost:3000)
 ```
 
 ## What's collected
@@ -88,6 +90,31 @@ register tables in
 [TypQxQ/Sigenergy-Local-Modbus](https://github.com/TypQxQ/Sigenergy-Local-Modbus)
 and [seud0nym/sigenergy2mqtt](https://github.com/seud0nym/sigenergy2mqtt).
 
+## Weather (Open-Meteo)
+
+`weather-collector/weather_collector.py` polls Open-Meteo's free forecast
+API (no key needed) hourly and writes to a separate `weather` measurement in
+the same InfluxDB bucket, tagged `source: open-meteo`:
+
+| Field | Meaning |
+|---|---|
+| `cloud_cover_pct` | Total cloud cover |
+| `shortwave_radiation_wm2` | Global horizontal irradiance - the main PV driver |
+| `direct_radiation_wm2` | Direct beam component |
+| `diffuse_radiation_wm2` | Diffuse (scattered) component |
+| `temperature_c` | 2m air temperature |
+
+Each poll fetches `WEATHER_PAST_DAYS` (default 92, Open-Meteo's cap) of
+recent history plus `WEATHER_FORECAST_DAYS` (default 16) ahead, and writes
+every hourly point keyed by its own timestamp - so re-polling naturally
+refines past hours toward reanalysis and future hours toward a shorter,
+more accurate forecast, since InfluxDB takes the last write per timestamp.
+Set `WEATHER_LATITUDE`/`WEATHER_LONGITUDE` in `.env` to the site's
+coordinates.
+
+This exists to pair with PV history for forecasting work - see
+`forecasting/`.
+
 ## Setup
 
 1. On the SigenStor, confirm Modbus TCP Server is enabled (installer setting).
@@ -100,7 +127,8 @@ and [seud0nym/sigenergy2mqtt](https://github.com/seud0nym/sigenergy2mqtt).
    queries against the raw data.
 
 Check collector logs with `docker compose logs -f collector` - it logs every
-successful poll and any Modbus connection errors.
+successful poll and any Modbus connection errors. Check weather-collector
+logs with `docker compose logs -f weather-collector` similarly.
 
 ## Deploying the collector as a systemd service (Ubuntu Server)
 
