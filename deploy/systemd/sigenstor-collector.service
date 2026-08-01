@@ -1,0 +1,35 @@
+[Unit]
+Description=SigenStor Modbus collector
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=sigenstor
+Group=sigenstor
+WorkingDirectory=/opt/sigenstor-collector
+EnvironmentFile=/etc/sigenstor-collector/collector.env
+ExecStart=/opt/sigenstor-collector/venv/bin/python /opt/sigenstor-collector/collector.py
+Restart=on-failure
+RestartSec=5
+
+# Hardening - the collector only does outbound network I/O (Modbus TCP to the
+# inverter, HTTP to InfluxDB) and never touches the filesystem, so it can run
+# fully sandboxed with no writable paths at all.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

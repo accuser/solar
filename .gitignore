@@ -1,0 +1,15 @@
+# Secrets / local config - *.env.example files are intentionally tracked
+*.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
