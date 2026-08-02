@@ -5,7 +5,7 @@ A Python collector polls the plant-level registers every few seconds and writes
 them to InfluxDB; Grafana visualizes them. Everything runs in Docker on your
 own network - nothing leaves the house.
 
-```
+```text/plain
 SigenStor (192.168.68.56:502, Modbus TCP)          Open-Meteo (forecast API)
         |                                                    |
    collector (Python / pymodbus)          weather-collector (Python / requests)
@@ -33,7 +33,7 @@ tiers, each configurable in `.env`:
 All registers, read via function code 4 (read input registers):
 
 | Field | Register | Meaning |
-|---|---|---|
+| --- | --: | --- |
 | `pv_power_kw` | 30035 | PV generation (total, all strings) |
 | `battery_power_kw` | 30037 | Battery power: **>0 charging, <0 discharging** |
 | `grid_power_kw` | 30005 | Grid power: **>0 import (buy), <0 export (sell)** |
@@ -97,7 +97,7 @@ API (no key needed) hourly and writes to a separate `weather` measurement in
 the same InfluxDB bucket, tagged `source: open-meteo`:
 
 | Field | Meaning |
-|---|---|
+| --- | --- |
 | `cloud_cover_pct` | Total cloud cover |
 | `shortwave_radiation_wm2` | Global horizontal irradiance - the main PV driver |
 | `direct_radiation_wm2` | Direct beam component |
@@ -121,9 +121,9 @@ This exists to pair with PV history for forecasting work - see
 2. `cp .env.example .env` and edit it - at minimum set a real `INFLUXDB_TOKEN`
    and change the admin passwords.
 3. `docker compose up -d --build`
-4. Open Grafana at http://localhost:3000 (login from `.env`). The "SigenStor"
+4. Open Grafana at <http://localhost:3000> (login from `.env`). The "SigenStor"
    dashboard is auto-provisioned.
-5. Open InfluxDB at http://localhost:8086 if you want to run ad-hoc Flux
+5. Open InfluxDB at <http://localhost:8086> if you want to run ad-hoc Flux
    queries against the raw data.
 
 Check collector logs with `docker compose logs -f collector` - it logs every
@@ -138,7 +138,7 @@ collector moves to a native systemd service. Files for this are in
 was written on macOS) - treat as a solid starting point, not a verified
 recipe; check `systemctl status` / `journalctl` carefully after first deploy.
 
-```
+```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin sigenstor
 
 sudo mkdir -p /opt/sigenstor-collector /etc/sigenstor-collector
