@@ -1,21 +1,22 @@
-# SigenStor monitoring
+# Home energy & MVHR monitoring
 
-Local, cloud-free monitoring for a SigenStor inverter/battery over Modbus TCP.
-A Python collector polls the plant-level registers every few seconds and writes
-them to InfluxDB; Grafana visualizes them. Everything runs in Docker on your
-own network - nothing leaves the house.
+Local, cloud-free monitoring for a SigenStor inverter/battery and a Variheat
+MVHR/heat pump unit, both over Modbus TCP, plus Open-Meteo weather. Python
+collectors poll their respective devices every few seconds and write to
+InfluxDB; Grafana visualizes them. Everything runs in Docker on your own
+network - nothing leaves the house.
 
 ```text/plain
-SigenStor (192.168.68.56:502, Modbus TCP)          Open-Meteo (forecast API)
-        |                                                    |
-   collector (Python / pymodbus)          weather-collector (Python / requests)
-        |                                                    |
-        +---------------------> InfluxDB <-------------------+
+SigenStor (192.168.68.56:502, Modbus TCP)          Open-Meteo (forecast API)          Variheat MVHR (192.168.68.66:502, Modbus TCP)
+        |                                                    |                                            |
+   collector (Python / pymodbus)          weather-collector (Python / requests)         variheat-collector (Python / pymodbus)
+        |                                                    |                                            |
+        +---------------------> InfluxDB <-------------------+<-------------------------------------------+
                                     |
                                  Grafana (http://localhost:3000)
 ```
 
-## What's collected
+## SigenStor (Modbus)
 
 Registers poll at different rates depending on how fast they actually change -
 a single 1-second tick loop in `collector.py` decides what's due each second
@@ -115,20 +116,76 @@ coordinates.
 This exists to pair with PV history for forecasting work - see
 `forecasting/`.
 
+## Variheat MVHR (Modbus)
+
+`variheat-collector/variheat_collector.py` polls a Calorex Variheat AW600
+(a pool-hall MVHR/heat pump unit, driven by a Variheat M172 PLC) over Modbus
+TCP and writes to a `variheat` measurement in the same InfluxDB bucket,
+tagged `source: mvhr`. Same fast/medium tiered-polling structure as the
+SigenStor collector, configurable via `VARIHEAT_FAST_POLL_SECONDS` /
+`VARIHEAT_MEDIUM_POLL_SECONDS` in `.env`.
+
+| Field | Register | Meaning |
+| --- | --: | --- |
+| `air_probe_c` / `air_set_point_c` | 16792 / 16790 | Air temperature: measured / setpoint |
+| `water_probe_c` / `water_set_point_c` | 16812 / 16810 | Pool water temperature: measured / setpoint |
+| `humidity_probe_pct` / `humidity_set_point_pct` | 16780 / 16778 | Relative humidity: measured / setpoint |
+| `ambient_probe_c` | 16824 | Outdoor ambient temperature |
+| `unit_on`, `occupied`, `standby_switch` | 17050, 16928, 16888 | Overall unit state |
+| `compressor`, `air_heating`, `water_heating`, `defrost_active`, `frost_protection_active`, `fans_enable`, `boiler`, `pool_pump`, `reversing_valve` | 16902, 16904, 16906, 16910, 16912, 16946, 16938, 16940, 16944 | Run-state booleans - see below |
+| `pressure_fault`, `fire_alarm`, `fan_blockage`, `pool_pump_fault`, `service_due`, `main_fan_alarm`, `clock_needs_setting`, `fault_bms` | 16914, 16916, 16918, 16920, 16922, 16924, 16926, 16942 | Alarms/faults, 0 = clear |
+
+**There's no power register in this map.** The run-state booleans
+(compressor/air heating/water heating/defrost/fans/boiler/pool pump) are the
+closest proxy for the MVHR's electrical draw, and the reason this is worth
+integrating alongside SigenStor rather than as a standalone dashboard: they
+let you correlate a grid-import spike in the `sigenstor` measurement
+(`grid_power_kw`) with what the MVHR was actually doing at that moment
+(e.g. defrost cycles are usually the biggest and shortest spikes).
+
+**Protocol details empirically determined, not in Dantherm's connection
+guide** (the PDF documents register addresses only, in IEC61131 1-based
+syntax, and how to reach the unit over its RS485 port - this unit is
+instead reached over Modbus TCP via its Ethernet port, which the guide
+doesn't fully cover):
+
+- Modbus unit/slave id is **255** - not the "Slave Address" shown in the
+  PLC's BMS settings menu (that setting is for its RS485 Modbus/RTU port).
+- Every register, including nominally read-only ones, is read via **function
+  code 3** (read holding registers) - function code 4 (read input registers,
+  what SigenStor uses) errors on all of them.
+- 32-bit values (REAL, UDINT) decode with **word order "little"** (low word
+  first, matching the doc's own note about double-length variables) -
+  confirmed by reading the PLC's own live clock registers and checking they
+  match wall-clock time.
+- Probe *reading* registers (`*_probe_c`, `humidity_probe_pct`) come back
+  **pre-scaled x10** versus their setpoint counterparts - e.g. a raw
+  humidity reading of 322 against a documented 15-80% setpoint range, so
+  322% is impossible but 32.2% isn't. Setpoint registers are the literal
+  value with no scaling.
+
+See `variheat-collector/variheat_collector.py`'s module docstring for the
+full details. The full register map (see the PDF at the repo root, not
+tracked in git) has plenty more - schedule/DST/dance-hall settings, service
+dates, per-day occupancy periods, and the write-capable holding registers
+for remote control - deliberately left out for now since this is
+monitoring-only, same as SigenStor.
+
 ## Setup
 
 1. On the SigenStor, confirm Modbus TCP Server is enabled (installer setting).
 2. `cp .env.example .env` and edit it - at minimum set a real `INFLUXDB_TOKEN`
    and change the admin passwords.
 3. `docker compose up -d --build`
-4. Open Grafana at <http://localhost:3000> (login from `.env`). The "SigenStor"
-   dashboard is auto-provisioned.
+4. Open Grafana at <http://localhost:3000> (login from `.env`). The
+   "SigenStor" and "Variheat MVHR" dashboards are auto-provisioned.
 5. Open InfluxDB at <http://localhost:8086> if you want to run ad-hoc Flux
    queries against the raw data.
 
 Check collector logs with `docker compose logs -f collector` - it logs every
 successful poll and any Modbus connection errors. Check weather-collector
-logs with `docker compose logs -f weather-collector` similarly.
+and variheat-collector logs with `docker compose logs -f weather-collector`
+/ `docker compose logs -f variheat-collector` similarly.
 
 ## Deploying the collector as a systemd service (Ubuntu Server)
 
@@ -180,6 +237,14 @@ Things specific to this move, beyond the obvious "write a unit file":
 - The unit ships with fairly aggressive sandboxing (`ProtectSystem=strict`,
   no filesystem writes, etc.) since the collector's only job is outbound
   network I/O and it holds an InfluxDB token in its environment.
+
+The Variheat collector deploys the same way, in parallel - swap `sigenstor`
+for `variheat` throughout (`deploy/systemd/variheat-collector.service` and
+`variheat-collector.env.example` are the equivalent files, and
+`variheat-collector/variheat_collector.py` / `requirements.txt` are what get
+copied to `/opt/variheat-collector/`). It's an independent systemd unit, so
+either collector can be stopped/restarted/redeployed without touching the
+other.
 
 ## Where this can go next
 

@@ -48,6 +48,21 @@ services:
       INFLUXDB_ORG: ${INFLUXDB_ORG}
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
 
+  variheat-collector:
+    build: ./variheat-collector
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    environment:
+      VARIHEAT_MODBUS_HOST: ${VARIHEAT_MODBUS_HOST}
+      VARIHEAT_MODBUS_PORT: ${VARIHEAT_MODBUS_PORT}
+      VARIHEAT_FAST_POLL_SECONDS: ${VARIHEAT_FAST_POLL_SECONDS}
+      VARIHEAT_MEDIUM_POLL_SECONDS: ${VARIHEAT_MEDIUM_POLL_SECONDS}
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
+
   grafana:
     image: grafana/grafana:11.4.0
     restart: unless-stopped

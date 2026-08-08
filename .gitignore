@@ -1,6 +1,9 @@
 # Secrets / local config - *.env.example files are intentionally tracked
 *.env
 
+# Vendor docs dropped in the repo root for reference, not for tracking
+*.pdf
+
 # Python
 __pycache__/
 *.pyc

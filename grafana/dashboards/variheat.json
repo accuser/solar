@@ -1,0 +1,215 @@
+{
+  "title": "Variheat MVHR",
+  "uid": "variheat-overview",
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Temperatures",
+      "type": "timeseries",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": { "lineWidth": 2, "fillOpacity": 0, "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "air_probe_c" },
+            "properties": [
+              { "id": "displayName", "value": "Air (actual)" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "air_set_point_c" },
+            "properties": [
+              { "id": "displayName", "value": "Air (setpoint)" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3987e5" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "water_probe_c" },
+            "properties": [
+              { "id": "displayName", "value": "Water (actual)" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "water_set_point_c" },
+            "properties": [
+              { "id": "displayName", "value": "Water (setpoint)" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#199e70" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "ambient_probe_c" },
+            "properties": [
+              { "id": "displayName", "value": "Ambient" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#c98500" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        { "refId": "A", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"air_probe_c\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"air_probe_c\")" },
+        { "refId": "B", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"air_set_point_c\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"air_set_point_c\")" },
+        { "refId": "C", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"water_probe_c\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"water_probe_c\")" },
+        { "refId": "D", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"water_set_point_c\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"water_set_point_c\")" },
+        { "refId": "E", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"ambient_probe_c\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"ambient_probe_c\")" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Humidity",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "lineWidth": 2, "fillOpacity": 8, "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "humidity_probe_pct" },
+            "properties": [
+              { "id": "displayName", "value": "RH (actual)" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#9085e9" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "humidity_set_point_pct" },
+            "properties": [
+              { "id": "displayName", "value": "RH (setpoint)" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#9085e9" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        { "refId": "A", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"humidity_probe_pct\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"humidity_probe_pct\")" },
+        { "refId": "B", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"humidity_set_point_pct\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"humidity_set_point_pct\")" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Unit state",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Off", "color": "#8e8e8e" }, "1": { "text": "On", "color": "green" } } }
+          ]
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "unit_on" }, "properties": [{ "id": "displayName", "value": "Unit On" }] },
+          { "matcher": { "id": "byName", "options": "occupied" }, "properties": [{ "id": "displayName", "value": "Occupied" }] },
+          { "matcher": { "id": "byName", "options": "standby_switch" }, "properties": [{ "id": "displayName", "value": "Standby" }] }
+        ]
+      },
+      "targets": [
+        { "refId": "A", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"unit_on\") |> last()" },
+        { "refId": "B", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"occupied\") |> last()" },
+        { "refId": "C", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"standby_switch\") |> last()" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Run state (load proxy)",
+      "type": "state-timeline",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Off", "color": "transparent" }, "1": { "text": "On", "color": "#d9822b" } } }
+          ]
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "compressor" }, "properties": [{ "id": "displayName", "value": "Compressor" }] },
+          { "matcher": { "id": "byName", "options": "air_heating" }, "properties": [{ "id": "displayName", "value": "Air heating" }] },
+          { "matcher": { "id": "byName", "options": "water_heating" }, "properties": [{ "id": "displayName", "value": "Water heating" }] },
+          { "matcher": { "id": "byName", "options": "defrost_active" }, "properties": [{ "id": "displayName", "value": "Defrost" }] },
+          { "matcher": { "id": "byName", "options": "frost_protection_active" }, "properties": [{ "id": "displayName", "value": "Frost protection" }] },
+          { "matcher": { "id": "byName", "options": "fans_enable" }, "properties": [{ "id": "displayName", "value": "Fans" }] },
+          { "matcher": { "id": "byName", "options": "boiler" }, "properties": [{ "id": "displayName", "value": "Boiler" }] },
+          { "matcher": { "id": "byName", "options": "pool_pump" }, "properties": [{ "id": "displayName", "value": "Pool pump" }] },
+          { "matcher": { "id": "byName", "options": "reversing_valve" }, "properties": [{ "id": "displayName", "value": "Reversing valve" }] }
+        ]
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "alignValue": "left",
+        "rowHeight": 0.9
+      },
+      "targets": [
+        { "refId": "A", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"compressor\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"compressor\")" },
+        { "refId": "B", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"air_heating\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"air_heating\")" },
+        { "refId": "C", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"water_heating\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"water_heating\")" },
+        { "refId": "D", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"defrost_active\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"defrost_active\")" },
+        { "refId": "H", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"frost_protection_active\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"frost_protection_active\")" },
+        { "refId": "E", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"fans_enable\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"fans_enable\")" },
+        { "refId": "F", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"boiler\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"boiler\")" },
+        { "refId": "G", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"pool_pump\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"pool_pump\")" },
+        { "refId": "I", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"reversing_valve\") |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false) |> yield(name: \"reversing_valve\")" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Alarms & faults",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 26 },
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#0ca30c", "value": null },
+              { "color": "#d03b3b", "value": 1 }
+            ]
+          }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "pressure_fault" }, "properties": [{ "id": "displayName", "value": "Pressure fault" }] },
+          { "matcher": { "id": "byName", "options": "fire_alarm" }, "properties": [{ "id": "displayName", "value": "Fire alarm" }] },
+          { "matcher": { "id": "byName", "options": "fan_blockage" }, "properties": [{ "id": "displayName", "value": "Fan blockage" }] },
+          { "matcher": { "id": "byName", "options": "pool_pump_fault" }, "properties": [{ "id": "displayName", "value": "Pool pump fault" }] },
+          { "matcher": { "id": "byName", "options": "main_fan_alarm" }, "properties": [{ "id": "displayName", "value": "Main fan alarm" }] },
+          { "matcher": { "id": "byName", "options": "fault_bms" }, "properties": [{ "id": "displayName", "value": "BMS fault output" }] },
+          { "matcher": { "id": "byName", "options": "service_due" }, "properties": [{ "id": "displayName", "value": "Service due" }] },
+          { "matcher": { "id": "byName", "options": "clock_needs_setting" }, "properties": [{ "id": "displayName", "value": "Clock needs setting" }] }
+        ]
+      },
+      "targets": [
+        { "refId": "A", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"pressure_fault\") |> last()" },
+        { "refId": "B", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"fire_alarm\") |> last()" },
+        { "refId": "C", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"fan_blockage\") |> last()" },
+        { "refId": "D", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"pool_pump_fault\") |> last()" },
+        { "refId": "E", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"main_fan_alarm\") |> last()" },
+        { "refId": "F", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"fault_bms\") |> last()" },
+        { "refId": "G", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"service_due\") |> last()" },
+        { "refId": "H", "query": "from(bucket: v.bucket) |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"variheat\") |> filter(fn: (r) => r._field == \"clock_needs_setting\") |> last()" }
+      ]
+    }
+  ]
+}
