@@ -23,7 +23,7 @@ SigenStor (192.168.68.56:502, Modbus TCP)          Open-Meteo (forecast API)    
 ## SigenStor (Modbus)
 
 Registers poll at different rates depending on how fast they actually change -
-a single 1-second tick loop in `collector.py` decides what's due each second
+a single 1-second tick loop in `sigenstor_collector.py` decides what's due each second
 via `now % register.interval_seconds == 0`, so a 5s register and a 300s
 register share one loop without the slow one holding up the fast one. Three
 tiers, each configurable in `.env`:
@@ -88,7 +88,7 @@ per-phase export limit rather than a total one, or if a single-phase load
 The full register map has many more fields (per-inverter detail, energy
 counters, alarms, per-load consumption for up to 24 "smart loads", and the
 write-capable holding registers for remote control). This starts with the
-plant-level essentials; extending `collector/collector.py`'s `REGISTERS`
+plant-level essentials; extending `sigenstor-collector/sigenstor_collector.py`'s `REGISTERS`
 list is straightforward - see Sigenergy's Modbus Protocol PDF (ask
 Sigenergy support/installer for the latest version) or the community
 register tables in
@@ -135,7 +135,7 @@ SigenStor collector, configurable via `VARIHEAT_FAST_POLL_SECONDS` /
 | `water_probe_c` / `water_set_point_c` | 16812 / 16810 | Pool water temperature: measured / setpoint |
 | `humidity_probe_pct` / `humidity_set_point_pct` | 16780 / 16778 | Relative humidity: measured / setpoint |
 | `ambient_probe_c` | 16824 | Outdoor ambient temperature |
-| `unit_on`, `occupied`, `standby_switch` | 17050, 16928, 16888 | Overall unit state |
+| `unit_on`, `occupied`, `standby_switch`, `operation_switch` | 17050, 16928, 16888, 16890 | Overall unit state (`operation_switch` enables/disables air+humidity control, for summer use with pool hall doors open) |
 | `compressor`, `air_heating`, `water_heating`, `defrost_active`, `frost_protection_active`, `fans_enable`, `boiler`, `pool_pump`, `reversing_valve` | 16902, 16904, 16906, 16910, 16912, 16946, 16938, 16940, 16944 | Run-state booleans - see below |
 | `pressure_fault`, `fire_alarm`, `fan_blockage`, `pool_pump_fault`, `service_due`, `main_fan_alarm`, `clock_needs_setting`, `fault_bms` | 16914, 16916, 16918, 16920, 16922, 16924, 16926, 16942 | Alarms/faults, 0 = clear |
 
@@ -175,6 +175,88 @@ dates, per-day occupancy periods, and further write-capable holding
 registers for remote control (dampers, etc.) - left out of the collector
 for now, but see the next section for the one write-capable register
 already in use.
+
+### Node-RED MQTT bridge (retiring BACnet reads)
+
+Separately from Node-RED (`node-red.json` at the repo root - a fuller export
+of the user's actual, much larger Node-RED instance, covering lighting,
+other rooms, etc. as well as the pool), the MVHR is *also* monitored there
+via `node-red-contrib-bacnet`: a 1-second polling loop (tab "Monitoring" +
+the "Variheat AW600" subflow) reads ~13 BACnet points and republishes them,
+retained, to `variheat/*` MQTT topics that feed the "Pool UI" dashboard
+(gauges/LEDs) and the "Circulation Pump" tab's pump-on/off logic. This is
+the same BACnet interface with the known firmware bug (see "Occupancy
+control bridge" below) - reason enough to be skeptical of leaning on it for
+anything beyond what's already there.
+
+`variheat_collector.py` optionally republishes its own Modbus readings to
+those same retained topics - set `MQTT_HOST` (reusing the same broker as
+the occupancy bridge below) and it's enabled automatically; leave it unset
+and this collector behaves exactly as before. Only the topics something in
+Node-RED actually subscribes to are covered (checked by grepping
+`node-red.json`, not guessed) - `air/probe/out`, `water/probe/out`,
+`humidity/probe/out`, `air/heating`, `water/heating`, `occupied`,
+`operation/switch`, `pool/pump/fault`, `pool/pump/required`, `service/due`.
+Three more topics the BACnet loop publishes (`ambient/probe/out`,
+`main/fan/speed/control`, `exhaust/fan/speed`) have no subscriber anywhere
+in the flow, so they're intentionally not replicated.
+
+**Status: both this bridge and Node-RED's BACnet loop are live simultaneously
+right now** (confirmed by watching the broker - `ambient/probe/out` etc. are
+still being updated by BACnet, since nothing publishes those from the Modbus
+side). This is intentional and safe - retained MQTT is last-write-wins per
+topic, so having two publishers on the same 10 topics doesn't break anything
+mid-transition, it just means Pool UI/Circulation Pump are currently seeing
+whichever of the two polling loops wrote most recently.
+
+**Cross-check (2026-08-08):** read register 16824 directly via Modbus
+(27.8°C) and compared against BACnet's own retained publish on
+`variheat/ambient/probe/out` (also 27.8°C, an independent, non-shared
+topic) - exact match, confirming Modbus and BACnet are reading the same
+underlying values, not just producing plausibly-shaped ones. `pool_pump`
+(register 16940) read 0 on both the register and the shared MQTT topic at
+the same check, which only confirms agreement while off - it doesn't yet
+prove the bridge's *value* is right when the pump actually turns on. Watch
+`variheat/pool/pump/required` (or the register directly) the next time the
+pump cycles on before fully trusting that path.
+
+**Cadence change:** BACnet's loop polled every ~1-2s; the Modbus bridge
+publishes `occupied` and `pool_pump` on `VARIHEAT_FAST_POLL_SECONDS`
+(5s). Fine for pump/occupancy logic, but the Pool UI dashboard will feel a
+little less snappy once BACnet is retired.
+
+The next step - **not yet done** - is removing the BACnet-Read half of the
+"Variheat AW600" subflow and the "Monitoring" tab from the live Node-RED
+instance now that the cross-check above confirms agreement. That's a change
+to make directly in the Node-RED editor and deploy from there, not
+something to apply by hand-editing `node-red.json` and re-importing it - the
+exported file is a large, mostly-unrelated snapshot of the whole house
+automation setup, and it's safer to delete the specific nodes/tab in the UI
+where you can see and undo each change.
+
+**Before deleting the BACnet loop, clear the 3 orphaned topics** it alone
+publishes (`variheat/ambient/probe/out`, `variheat/main/fan/speed/control`,
+`variheat/exhaust/fan/speed`) - otherwise they freeze at their last BACnet
+value forever (retained messages don't expire) and will look like live data
+to anyone checking later. Easiest fix: publish an empty retained message to
+each (e.g. `mosquitto_pub -r -n -t variheat/ambient/probe/out`), or add
+`ambient_probe_c` to `MQTT_TOPICS` in `variheat_collector.py` if you'd
+rather it stay a live value instead of going away.
+
+**If deploying under systemd rather than Docker,** remember
+`variheat-collector`'s venv needs `pip install -r requirements.txt` re-run
+after this change - `paho-mqtt` is a new dependency and the import is
+unconditional, so the service will crash on startup without it even if
+`MQTT_HOST` is left blank.
+
+**Also still BACnet, not yet addressed (Phase 2):** the "Circulation Pump"
+tab writes to the MVHR's `Operation Switch` object directly via
+`BACnet-Write` (inverted: pump on -> Operation Switch 0, pump off ->
+Operation Switch 1) whenever the pump's own schedule/override logic changes
+its state. `operation_switch` is now readable via Modbus (see the register
+table above) but nothing in this project writes it yet - moving that write
+into `variheat-control` (same dry-run-first, verify-in-person discipline as
+Occupancy) would let this last BACnet dependency go too.
 
 ## Occupancy control bridge (variheat-control)
 
@@ -280,9 +362,9 @@ is the sole occupancy control path.
 5. Open InfluxDB at <http://localhost:8086> if you want to run ad-hoc Flux
    queries against the raw data.
 
-Check collector logs with `docker compose logs -f collector` - it logs every
-successful poll and any Modbus connection errors. Check weather-collector
-and variheat-collector logs with `docker compose logs -f weather-collector`
+Check collector logs with `docker compose logs -f sigenstor-collector` - it
+logs every successful poll and any Modbus connection errors. Check
+weather-collector and variheat-collector logs with `docker compose logs -f weather-collector`
 / `docker compose logs -f variheat-collector` similarly.
 
 ## Deploying the collector as a systemd service (Ubuntu Server)
@@ -297,11 +379,11 @@ recipe; check `systemctl status` / `journalctl` carefully after first deploy.
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin sigenstor
 
 sudo mkdir -p /opt/sigenstor-collector /etc/sigenstor-collector
-sudo cp collector/collector.py collector/requirements.txt /opt/sigenstor-collector/
+sudo cp sigenstor-collector/sigenstor_collector.py sigenstor-collector/requirements.txt /opt/sigenstor-collector/
 sudo python3 -m venv /opt/sigenstor-collector/venv
 sudo /opt/sigenstor-collector/venv/bin/pip install -r /opt/sigenstor-collector/requirements.txt
 
-sudo cp deploy/systemd/collector.env.example /etc/sigenstor-collector/collector.env
+sudo cp deploy/systemd/sigenstor-collector.env.example /etc/sigenstor-collector/collector.env
 sudo $EDITOR /etc/sigenstor-collector/collector.env   # fill in INFLUXDB_TOKEN, confirm INFLUXDB_URL
 sudo chown sigenstor:sigenstor /etc/sigenstor-collector/collector.env
 sudo chmod 600 /etc/sigenstor-collector/collector.env
@@ -319,8 +401,8 @@ Things specific to this move, beyond the obvious "write a unit file":
   (`http://influxdb:8086`) only resolves inside the Compose network. Once the
   collector runs outside Docker, it needs `http://localhost:8086` (InfluxDB's
   container still publishes that port on this host) or a LAN IP/hostname if
-  InfluxDB ever moves elsewhere. `deploy/systemd/collector.env.example` sets
-  this explicitly.
+  InfluxDB ever moves elsewhere. `deploy/systemd/sigenstor-collector.env.example`
+  sets this explicitly.
 - **Modbus vs InfluxDB failures are now handled separately in the code** - a
   failed Modbus read closes and reconnects the Modbus session; a failed
   InfluxDB write just logs and retries next tick, leaving Modbus alone. This

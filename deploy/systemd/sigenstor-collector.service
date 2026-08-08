@@ -11,7 +11,7 @@ User=sigenstor
 Group=sigenstor
 WorkingDirectory=/opt/sigenstor-collector
 EnvironmentFile=/etc/sigenstor-collector/collector.env
-ExecStart=/opt/sigenstor-collector/venv/bin/python /opt/sigenstor-collector/collector.py
+ExecStart=/opt/sigenstor-collector/venv/bin/python /opt/sigenstor-collector/sigenstor_collector.py
 Restart=on-failure
 RestartSec=5
 

@@ -4,6 +4,11 @@
 # Vendor docs dropped in the repo root for reference, not for tracking
 *.pdf
 
+# Full Node-RED export - contains live credentials (e.g. Hue bridge API key)
+# for the user's whole home-automation instance, not just the parts this
+# project integrates with. Kept locally for reference only.
+node-red.json
+
 # Python
 __pycache__/
 *.pyc
