@@ -1,11 +1,15 @@
 """
-Bridges MQTT occupancy-control messages to the Variheat M172 PLC's Modbus
-`Occupancy` register (16950), replacing a Raspberry Pi + relay (Automation
-HAT) currently wired into the PLC's hardwired remote-occupancy input. That
-relay exists only as a workaround for a firmware bug in the MVHR's BACnet
-implementation (its occupancy point only accepts 2 of its 3 documented
-states) - Modbus talks to the same 3-state register directly instead, so no
-relay is needed once this is confirmed working.
+Bridges MQTT control messages to two Variheat M172 PLC Modbus registers,
+replacing two BACnet-Write paths in `node-red.json`.
+
+--- Occupancy (register 16950) ---
+
+Replaces a Raspberry Pi + relay (Automation HAT) wired into the PLC's
+hardwired remote-occupancy input. That relay exists only as a workaround for
+a firmware bug in the MVHR's BACnet implementation (its occupancy point only
+accepts 2 of its 3 documented states) - Modbus talks to the same 3-state
+register directly instead, so no relay is needed once this is confirmed
+working.
 
 Replicates `node-red.json` (tab "Occupancy") 1:1: subscribes to every topic
 in OCCUPIED_TOPICS (default matches the flow's two `mqtt in` nodes -
@@ -17,14 +21,6 @@ boolean payload (confirmed live: `pool/control/occupied` is retained with
 payload `true`) - a fresh subscriber gets the current desired state
 immediately via MQTT's retained-message delivery, same as the relay would
 already be holding a physical state.
-
-See variheat-collector/variheat_collector.py's docstring for the Modbus
-quirks this module relies on (unit id 255, function code 3, addr-1,
-word_order "little"). The write side's encoding isn't just assumed
-symmetric with the read side - it's corroborated by data already collected:
-convert_to_registers(1, UINT32, "little") produces [1, 0], and the
-collector's own read of Unit On True (17050, also a BOOL-in-UDINT) returned
-exactly regs=[1, 0] live. Same layout on both sides.
 
 SAFETY: the mapping from occupied/unoccupied to register 16950's raw values
 (documented only as UDINT, default 1, min 0, max 2 - "controls if the
@@ -46,12 +42,72 @@ including checking whether register-level security (User Security Enable /
 Occ Security) is gating the write in the first place (checked live: it
 wasn't - User Security Enable read 0).
 
+--- Operation Switch (register 16890) ---
+
+Per Dantherm's connection guide (p.3), register 16890 "Enables/disables air
+and humidity control, for use during summer with pool hall doors open."
+That register and BACnet Binary Value instance 1 (p.9, same name, same
+description, same default) are confirmed to be the same underlying point,
+not assumed - `node-red.json`'s BACnet-Write targets objectId
+`{type: 5, instance: 1}` (type 5 = Binary Value), which the doc cross-
+references to this same register.
+
+Replaces the "Circulation Pump" tab's second BACnet-Write. What this
+project's automation currently *does* with that switch isn't obviously
+implied by its documented purpose above: Node-RED drives it off a fixed
+nightly schedule (a `light-scheduler` node, ~00:00-04:30 and 23:30-24:00
+daily, likely an off-peak electricity window) that *also* switches a
+separate physical device, a Tasmota smart plug running the pool's actual
+circulation pump - i.e. this deployment appears to be using the
+air/humidity-control switch as a proxy for "is the pool circulation pump
+running," not for its documented summer/doors-open purpose. Worth
+confirming in person which behaviour you actually see before trusting
+either story. Node-RED keeps owning that schedule and the Tasmota switch
+unchanged; it only needs to also publish its on/off decision, retained, to
+OPERATION_SWITCH_TOPIC (default `pool/control/circulation`) instead of
+calling BACnet-Write directly - a manual addition in the Node-RED editor
+(wire an `mqtt out` node off the light-scheduler's existing output), not a
+node-red.json file edit.
+
+The register value mapping is not a guess: `node-red.json`'s own
+BACnet-Write function inverts the schedule's payload identically -
+`value: (msg.payload ? 0 : 1)` - so schedule-on writes 0, schedule-off
+writes 1. Same values Node-RED has been writing successfully for a long
+time, so there's no Occupancy-style undocumented-mapping risk here. What
+*is* unverified is this specific Modbus write path (register 16890 has
+only ever been read by this project, never written) - so
+OPERATION_SWITCH_DRY_RUN defaults to true independently of
+VARIHEAT_CONTROL_DRY_RUN, so deploying this code doesn't silently arm a
+write to a schedule that already works fine via BACnet. Arm it separately,
+after confirming in person that a Modbus write here has the same effect
+BACnet's write did.
+
+Like Occupancy, there's no periodic reconciliation loop - only a change in
+the retained MQTT value (or a fresh subscribe on reconnect, which delivers
+whatever's currently retained) triggers a write. That's fine as long as
+Node-RED's schedule node is the one thing keeping the retained value
+current; if Node-RED itself is down across a schedule boundary, the
+retained value goes stale until it's back up and re-evaluates - a
+pre-existing characteristic of this schedule design, not something this
+bridge adds.
+
+--- Shared ---
+
+See variheat-collector/variheat_collector.py's docstring for the Modbus
+quirks both writers rely on (unit id 255, function code 3, addr-1,
+word_order "little"). The write side's encoding isn't just assumed
+symmetric with the read side - it's corroborated by data already collected:
+convert_to_registers(1, UINT32, "little") produces [1, 0], and the
+collector's own read of Unit On True (17050, also a BOOL-in-UDINT) returned
+exactly regs=[1, 0] live. Same layout on both sides.
+
 A failed write is retried on the next MQTT message that disagrees with the
 last successfully-applied state (see on_message: last_written only advances
-on a True return from write_occupancy) - but if the topics go quiet with no
-further messages, there's no periodic reconciliation loop forcing a retry.
-Acceptable for now since this is still dry-run by default; revisit if this
-becomes the sole path once the Pi is decommissioned.
+on a True return from the write functions) - but if the topics go quiet
+with no further messages, there's no periodic reconciliation loop forcing a
+retry. Acceptable for now since both writers are still dry-run by default
+or newly armed; revisit if this becomes the sole path once BACnet is fully
+retired.
 """
 import json
 import logging
@@ -71,14 +127,31 @@ OCCUPIED_TOPICS = [
     for t in os.environ.get("VARIHEAT_OCCUPIED_TOPICS", "pool/control/occupied,fluvo/control/active").split(",")
     if t.strip()
 ]
+OPERATION_SWITCH_TOPIC = os.environ.get("VARIHEAT_OPERATION_SWITCH_TOPIC", "pool/control/circulation")
+if OPERATION_SWITCH_TOPIC in OCCUPIED_TOPICS:
+    # on_message dispatches on an exact topic match and returns early for
+    # OPERATION_SWITCH_TOPIC - if it also appeared in OCCUPIED_TOPICS, the
+    # occupancy OR would silently lose that topic with no log line.
+    raise ValueError(
+        f"VARIHEAT_OPERATION_SWITCH_TOPIC ({OPERATION_SWITCH_TOPIC!r}) must not also appear in "
+        f"VARIHEAT_OCCUPIED_TOPICS ({OCCUPIED_TOPICS!r})"
+    )
 
 MODBUS_HOST = os.environ["VARIHEAT_MODBUS_HOST"]
 MODBUS_PORT = int(os.environ.get("VARIHEAT_MODBUS_PORT", 502))
 UNIT_ID = 255  # see variheat_collector.py
 
 OCCUPANCY_REGISTER = 16950
+OPERATION_SWITCH_REGISTER = 16890
 
 DRY_RUN = os.environ.get("VARIHEAT_CONTROL_DRY_RUN", "true").strip().lower() not in ("false", "0", "no")
+# Independent of DRY_RUN above - see module docstring's Operation Switch
+# section for why this write path needs its own, separately-armed flag.
+OPERATION_SWITCH_DRY_RUN = os.environ.get("VARIHEAT_OPERATION_SWITCH_DRY_RUN", "true").strip().lower() not in (
+    "false",
+    "0",
+    "no",
+)
 
 # Required only once actually armed (DRY_RUN=false) - see module docstring.
 OCCUPIED_VALUE = os.environ.get("VARIHEAT_OCCUPIED_VALUE")
@@ -146,27 +219,67 @@ def write_occupancy(modbus: ModbusTcpClient, occupied: bool) -> bool:
     return True
 
 
+def write_operation_switch(modbus: ModbusTcpClient, circulation_on: bool) -> bool:
+    """Same success/failure contract as write_occupancy. Mapping is fixed
+    (0=on, 1=off) - see module docstring, this mirrors node-red.json's own
+    BACnet-Write inversion exactly, not a guess."""
+    value = 0 if circulation_on else 1
+    if OPERATION_SWITCH_DRY_RUN:
+        log.info("[dry run] would write Operation Switch (%s) = %s (circulation_on=%s)", OPERATION_SWITCH_REGISTER, value, circulation_on)
+        return True
+
+    if not modbus.connected and not modbus.connect():
+        log.warning("Could not connect to %s:%s, dropping operation switch write", MODBUS_HOST, MODBUS_PORT)
+        return False
+    registers = modbus.convert_to_registers(value, data_type=DT.UINT32, word_order="little")
+    result = modbus.write_registers(address=OPERATION_SWITCH_REGISTER - 1, values=registers, slave=UNIT_ID)
+    if result.isError():
+        log.error("Modbus write failed for Operation Switch: %s", result)
+        modbus.close()
+        return False
+    log.info("wrote Operation Switch (%s) = %s (circulation_on=%s)", OPERATION_SWITCH_REGISTER, value, circulation_on)
+    return True
+
+
 def main() -> None:
     if DRY_RUN:
-        log.warning("DRY RUN MODE - no Modbus writes will be made. Set VARIHEAT_CONTROL_DRY_RUN=false "
+        log.warning("DRY RUN MODE (Occupancy) - no Modbus writes will be made. Set VARIHEAT_CONTROL_DRY_RUN=false "
                     "once VARIHEAT_OCCUPIED_VALUE/VARIHEAT_UNOCCUPIED_VALUE are confirmed against the live unit.")
+    if OPERATION_SWITCH_DRY_RUN:
+        log.warning("DRY RUN MODE (Operation Switch) - no Modbus writes will be made. Set "
+                    "VARIHEAT_OPERATION_SWITCH_DRY_RUN=false once a Modbus write to register %s has been "
+                    "confirmed in person to behave the same as Node-RED's BACnet-Write did.",
+                    OPERATION_SWITCH_REGISTER)
 
     modbus = ModbusTcpClient(MODBUS_HOST, port=MODBUS_PORT, timeout=5)
     last_written = None
+    last_written_operation_switch = None
 
     def on_connect(client, userdata, flags, reason_code, properties=None):
         log.info("connected to MQTT broker %s:%s (%s)", MQTT_HOST, MQTT_PORT, reason_code)
         for topic in OCCUPIED_TOPICS:
             client.subscribe(topic)
             log.info("subscribed to %s", topic)
+        client.subscribe(OPERATION_SWITCH_TOPIC)
+        log.info("subscribed to %s", OPERATION_SWITCH_TOPIC)
 
     def on_message(client, userdata, msg):
-        nonlocal last_written
+        nonlocal last_written, last_written_operation_switch
         try:
             value = parse_bool(msg.payload, msg.topic)
         except ValueError as e:
             log.warning("%s", e)
             return
+
+        if msg.topic == OPERATION_SWITCH_TOPIC:
+            log.info("%s -> %s (circulation_on)", msg.topic, value)
+            if value != last_written_operation_switch:
+                if write_operation_switch(modbus, value):
+                    last_written_operation_switch = value
+                else:
+                    log.warning("operation switch write failed, will retry on the next MQTT message")
+            return
+
         topic_state[msg.topic] = value
         occupied = any(topic_state.values())
         log.info("%s -> %s (topics: %s, combined: %s)", msg.topic, value, topic_state, occupied)

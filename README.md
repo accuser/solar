@@ -249,14 +249,29 @@ after this change - `paho-mqtt` is a new dependency and the import is
 unconditional, so the service will crash on startup without it even if
 `MQTT_HOST` is left blank.
 
-**Also still BACnet, not yet addressed (Phase 2):** the "Circulation Pump"
-tab writes to the MVHR's `Operation Switch` object directly via
-`BACnet-Write` (inverted: pump on -> Operation Switch 0, pump off ->
-Operation Switch 1) whenever the pump's own schedule/override logic changes
-its state. `operation_switch` is now readable via Modbus (see the register
-table above) but nothing in this project writes it yet - moving that write
-into `variheat-control` (same dry-run-first, verify-in-person discipline as
-Occupancy) would let this last BACnet dependency go too.
+**Phase 2 (built, dry-run, not yet armed):** the "Circulation Pump" tab also
+writes to the MVHR's `Operation Switch` object directly via `BACnet-Write`
+(inverted: schedule-on -> Operation Switch 0, schedule-off -> Operation
+Switch 1). Per Dantherm's connection guide, register 16890/BACnet Binary
+Value instance 1 "Enables/disables air and humidity control, for use during
+summer with pool hall doors open" - a general operating-mode switch, not
+specifically a pump control. This deployment's Node-RED flow drives it off
+a fixed nightly schedule (`light-scheduler` node "Circulation Pump
+Schedule", ~00:00-04:30 and 23:30-24:00 daily) that *also* switches a
+separate physical device, a Tasmota smart plug running the pool's actual
+circulation pump - i.e. it's being used here as a proxy for "is the
+circulation pump running," which is worth confirming in person rather than
+assuming matches the documented purpose. `variheat-control/variheat_control.py`
+now has a second write path for register 16890 with this same mapping, but
+Node-RED needs one small addition first: wire an `mqtt out` node (retained)
+off the schedule's existing output, publishing to `pool/control/circulation`
+(or whatever you set `VARIHEAT_OPERATION_SWITCH_TOPIC` to) - alongside its
+existing wires to the Tasmota switch and BACnet-Write, not replacing them
+yet. Leave `VARIHEAT_OPERATION_SWITCH_DRY_RUN=true` (the default,
+independent of `VARIHEAT_CONTROL_DRY_RUN`) until `probe_occupancy.py write
+operation <0|1>` has confirmed a Modbus write to 16890 has the same effect
+BACnet's write did - only then remove the BACnet-Write node and flip the
+flag.
 
 ## Occupancy control bridge (variheat-control)
 
@@ -327,8 +342,9 @@ across units/firmware versions.
 
 ```bash
 # From variheat-control/, or via `docker compose run --rm variheat-control python probe_occupancy.py ...`
-python probe_occupancy.py read           # current Occupancy / Occupied / relay input / fans state
-python probe_occupancy.py write 0        # try each value in turn, watching/listening to the unit
+python probe_occupancy.py read                # current Occupancy / Operation Switch / Occupied / relay input / fans state
+python probe_occupancy.py write occupancy 0   # try each value in turn, watching/listening to the unit
+python probe_occupancy.py write operation 1   # Phase 2 - verify a Modbus write to 16890 behaves like BACnet's did
 ```
 
 Each `write` immediately verifies the write landed (flags loudly if the
