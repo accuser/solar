@@ -1,19 +1,23 @@
-# Home energy & MVHR monitoring
+# Home energy & MVHR monitoring and control
 
 Local, cloud-free monitoring for a SigenStor inverter/battery and a Variheat
-MVHR/heat pump unit, both over Modbus TCP, plus Open-Meteo weather. Python
-collectors poll their respective devices every few seconds and write to
-InfluxDB; Grafana visualizes them. Everything runs in Docker on your own
-network - nothing leaves the house.
+MVHR/heat pump unit, both over Modbus TCP, plus Open-Meteo weather - and a
+first step into control, bridging MQTT occupancy commands to the MVHR over
+the same Modbus link. Python collectors poll their respective devices every
+few seconds and write to InfluxDB; Grafana visualizes them. Everything runs
+in Docker on your own network - nothing leaves the house.
 
 ```text/plain
 SigenStor (192.168.68.56:502, Modbus TCP)          Open-Meteo (forecast API)          Variheat MVHR (192.168.68.66:502, Modbus TCP)
-        |                                                    |                                            |
+        |                                                    |                                            |          ^
    collector (Python / pymodbus)          weather-collector (Python / requests)         variheat-collector (Python / pymodbus)
-        |                                                    |                                            |
-        +---------------------> InfluxDB <-------------------+<-------------------------------------------+
-                                    |
-                                 Grafana (http://localhost:3000)
+        |                                                    |                                            |          |
+        +---------------------> InfluxDB <-------------------+<-------------------------------------------+          |
+                                    |                                                                                 |
+                                 Grafana (http://localhost:3000)                          variheat-control (Python / pymodbus + MQTT)
+                                                                                                             ^
+                                                                                                             |
+                                                                                          MQTT (mosquitto, existing Node-RED topics)
 ```
 
 ## SigenStor (Modbus)
@@ -167,9 +171,103 @@ doesn't fully cover):
 See `variheat-collector/variheat_collector.py`'s module docstring for the
 full details. The full register map (see the PDF at the repo root, not
 tracked in git) has plenty more - schedule/DST/dance-hall settings, service
-dates, per-day occupancy periods, and the write-capable holding registers
-for remote control - deliberately left out for now since this is
-monitoring-only, same as SigenStor.
+dates, per-day occupancy periods, and further write-capable holding
+registers for remote control (dampers, etc.) - left out of the collector
+for now, but see the next section for the one write-capable register
+already in use.
+
+## Occupancy control bridge (variheat-control)
+
+Unlike SigenStor, this integration isn't monitoring-only: `variheat-control/variheat_control.py`
+writes to the PLC's `Occupancy` register (16950, R/W) to force the MVHR into
+occupied or unoccupied mode on demand.
+
+**Why this exists:** the MVHR's BACnet occupancy point has a firmware bug -
+it only accepts 2 of its 3 documented states - so occupancy is currently
+controlled by a Raspberry Pi (`node-red.json`, tab "Occupancy") that
+subscribes to MQTT and drives a relay (Automation HAT) wired into the PLC's
+hardwired remote-occupancy input. Modbus talks to the same 3-state register
+directly, which should let the Pi and relay be retired once this is
+confirmed working. This is also the first step toward the longer-term goal
+of programmatic control (e.g. running the MVHR based on solar output/tariff
+rather than a fixed schedule) - see "Where this can go next".
+
+**It's a 1:1 behavioral port of the existing Node-RED flow**, not a redesign:
+subscribes to every topic in `VARIHEAT_OCCUPIED_TOPICS` (default
+`pool/control/occupied,fluvo/control/active`, matching the flow's two `mqtt in`
+nodes), ORs their latest known values together (matching the flow's
+`combine-logic` node), and writes to the PLC only when the combined result
+changes (matching the flow's `rbe` node). Both topics are confirmed to carry
+a bare JSON boolean payload with the retain flag set (checked live:
+`pool/control/occupied` → `true`, retained) - a fresh subscriber gets the
+current desired state immediately on connect, same as the relay already
+holds a physical state today.
+
+**This does not start with the rest of the stack.** `docker compose up` will
+not bring it up - it's gated behind a Compose profile:
+
+```bash
+docker compose --profile control up -d --build variheat-control
+```
+
+That's deliberate, and safe to do at any time even before the next step,
+because of the following:
+
+**Safety gate: the 0/1/2 mapping for register 16950 isn't documented by
+Dantherm.** Their guide says only "UDINT, default 1, min 0, max 2 - controls
+if the machine should be forced into occupied, unoccupied, or left to the
+NSB schedule" - it doesn't say which raw value means what.
+`VARIHEAT_OCCUPIED_VALUE` / `VARIHEAT_UNOCCUPIED_VALUE` have no defaults on
+purpose, and `VARIHEAT_CONTROL_DRY_RUN` defaults to `true`: in dry-run mode
+the bridge connects to MQTT and Modbus-reads normally, computes what it
+would write, and logs it - but never calls `write_registers`. The service
+refuses to start at all with `VARIHEAT_CONTROL_DRY_RUN=false` unless both
+values are set (checked eagerly at startup, not on first write).
+
+**Mapping confirmed in person, 2026-08-08, against the unit's own display**
+(not just register readback) using `probe_occupancy.py`:
+
+| Value | Unit's display shows |
+| --: | --- |
+| **0** | Occupied |
+| **1** | Automatic (NSB/schedule - not used by this bridge, but available) |
+| **2** | Unoccupied |
+
+`.env`/`.env.example` are set accordingly (`VARIHEAT_OCCUPIED_VALUE=0`,
+`VARIHEAT_UNOCCUPIED_VALUE=2`). Fans staying on for a bit after switching to
+unoccupied is expected - the unit has its own overrun setting for this, not
+a bug in the bridge. `VARIHEAT_CONTROL_DRY_RUN` is still `true` by default
+even with both values set - arming (`false`) is a deliberate, separate step.
+If you ever point this at a different Variheat unit, re-verify with
+`probe_occupancy.py` rather than assuming this mapping holds - it isn't
+documented anywhere Dantherm-side, so there's no guarantee it's consistent
+across units/firmware versions.
+
+```bash
+# From variheat-control/, or via `docker compose run --rm variheat-control python probe_occupancy.py ...`
+python probe_occupancy.py read           # current Occupancy / Occupied / relay input / fans state
+python probe_occupancy.py write 0        # try each value in turn, watching/listening to the unit
+```
+
+Each `write` immediately verifies the write landed (flags loudly if the
+readback disagrees - e.g. from security gating), then waits 2s and re-reads
+the same block so you can correlate the raw value with the PLC's own
+`Occupied` status readback (16928) and the physical relay input (16936,
+useful to cross-check against the Pi's current behavior while it's still
+wired in).
+
+**Status: armed and live as of 2026-08-08.** In practice the cutover went
+the other way round from the original plan above - rather than running the
+bridge alongside the Pi and comparing, the Pi was powered off first (to
+remove any question of which of the two control paths would win if they
+ever disagreed), confirmed via `Remote Occ Unocc` (16936) staying at `0`
+with the Pi off, and only then was `VARIHEAT_CONTROL_DRY_RUN` flipped to
+`false`. Confirmed live end-to-end: the bridge picked up the retained
+`pool/control/occupied` message, wrote `Occupancy = 0`, and the unit's own
+display showed "Occupied" with fans running - matching the same behavior
+observed during the manual `probe_occupancy.py` testing above. The Pi and
+its Node-RED flow (`node-red.json`) are now fully retired; `variheat-control`
+is the sole occupancy control path.
 
 ## Setup
 
@@ -246,6 +344,15 @@ copied to `/opt/variheat-collector/`). It's an independent systemd unit, so
 either collector can be stopped/restarted/redeployed without touching the
 other.
 
+`variheat-control` (see "Occupancy control bridge" above) has its own unit
+too - `deploy/systemd/variheat-control.service` and `variheat-control.env.example`,
+copying `variheat-control/variheat_control.py`, `probe_occupancy.py`, and
+`requirements.txt` to `/opt/variheat-control/`. It's fine to `systemctl
+enable --now` this one right away, since it stays in dry-run mode (no Modbus
+writes at all) until `VARIHEAT_OCCUPIED_VALUE`/`VARIHEAT_UNOCCUPIED_VALUE`
+are filled in and `VARIHEAT_CONTROL_DRY_RUN` is explicitly set to `false` in
+`control.env` - do that only after confirming the mapping in person.
+
 ## Where this can go next
 
 A few more registers were identified but deliberately left out for now (lower
@@ -257,10 +364,21 @@ skipped: the 24 "smart load" registers (only relevant if sub-circuit
 monitoring is configured in the app) and third-party inverter/EVDC fields
 (not installed here).
 
-This stack is deliberately monitoring-only. The same register map exposes
-write-capable holding registers (plant-level EMS work mode, charge/discharge
-power limits, export limits), so once you've watched enough real data to
-know what "the right behaviour" looks like, a control/strategy layer (e.g.
-reacting to a dynamic tariff, or holding a reserve for a peak window) can be
-added as a separate service that writes those registers - without needing to
-change the collector or dashboard.
+SigenStor itself stays monitoring-only for now. The same register map
+exposes write-capable holding registers (plant-level EMS work mode,
+charge/discharge power limits, export limits), so once you've watched
+enough real data to know what "the right behaviour" looks like, a
+control/strategy layer (e.g. reacting to a dynamic tariff, or holding a
+reserve for a peak window) can be added as a separate service that writes
+those registers - without needing to change the collector or dashboard.
+`variheat-control` (see above) is the first instance of exactly this
+pattern, for the MVHR rather than SigenStor.
+
+Variheat's control surface is currently just occupancy. The PLC's Modbus map
+has further write-capable registers not used yet - `Damper Switch` (16952,
+force dampers min/max/auto) is the next obvious candidate, and the longer-term
+goal is choosing when the MVHR runs (and how hard) based on solar output or
+tariff rather than a fixed schedule, the same way SigenStor's own
+control/strategy layer above would work - likely as logic added to
+`variheat-control` once occupancy is proven out, reading `sigenstor`
+measurement fields (e.g. `pv_power_kw`) to decide.

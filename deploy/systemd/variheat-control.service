@@ -1,0 +1,35 @@
+[Unit]
+Description=Variheat MVHR occupancy control bridge (MQTT -> Modbus)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=variheat
+Group=variheat
+WorkingDirectory=/opt/variheat-control
+EnvironmentFile=/etc/variheat-control/control.env
+ExecStart=/opt/variheat-control/venv/bin/python /opt/variheat-control/variheat_control.py
+Restart=on-failure
+RestartSec=5
+
+# Hardening - the bridge only does outbound network I/O (MQTT to the broker,
+# Modbus TCP to the PLC) and never touches the filesystem, so it can run
+# fully sandboxed with no writable paths at all.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

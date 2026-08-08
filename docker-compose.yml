@@ -63,6 +63,25 @@ services:
       INFLUXDB_ORG: ${INFLUXDB_ORG}
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
 
+  # Not started by a plain `docker compose up` - see README. Bring it up
+  # explicitly with `docker compose --profile control up -d --build variheat-control`
+  # once VARIHEAT_OCCUPIED_VALUE/VARIHEAT_UNOCCUPIED_VALUE are confirmed
+  # against the live unit; until then it's safe to enable in dry-run mode too.
+  variheat-control:
+    build: ./variheat-control
+    restart: unless-stopped
+    profiles:
+      - control
+    environment:
+      MQTT_HOST: ${MQTT_HOST}
+      MQTT_PORT: ${MQTT_PORT}
+      VARIHEAT_OCCUPIED_TOPICS: ${VARIHEAT_OCCUPIED_TOPICS}
+      VARIHEAT_MODBUS_HOST: ${VARIHEAT_MODBUS_HOST}
+      VARIHEAT_MODBUS_PORT: ${VARIHEAT_MODBUS_PORT}
+      VARIHEAT_CONTROL_DRY_RUN: ${VARIHEAT_CONTROL_DRY_RUN}
+      VARIHEAT_OCCUPIED_VALUE: ${VARIHEAT_OCCUPIED_VALUE}
+      VARIHEAT_UNOCCUPIED_VALUE: ${VARIHEAT_UNOCCUPIED_VALUE}
+
   grafana:
     image: grafana/grafana:11.4.0
     restart: unless-stopped
